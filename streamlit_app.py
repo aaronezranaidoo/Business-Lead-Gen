@@ -6,97 +6,80 @@ import re
 import urllib.parse
 import time
 
-st.set_page_config(page_title="SA Business Leads Finder", layout="wide")
-st.title("📞 Free Business Lead Finder (South Africa)")
-st.markdown("Get public contact info from Yellow Pages and Facebook in your chosen city and field.")
+st.set_page_config(page_title="Smart SA Lead Scraper", layout="wide")
+st.title("📡 Smart Business Lead Finder (SA)")
+st.markdown("🔍 This app finds public business leads on **Google Search**, filtered by Facebook + YellowPages.")
 
-cities = [
-    "Johannesburg", "Cape Town", "Durban", "Pretoria", "Port Elizabeth",
-    "East London", "Bloemfontein", "Polokwane", "Nelspruit", "Kimberley"
+provinces = [
+    "Gauteng", "KwaZulu-Natal", "Western Cape", "Eastern Cape",
+    "Free State", "Limpopo", "Mpumalanga", "North West", "Northern Cape"
 ]
 
 industries = [
-    "Plumber", "Mechanic", "Electrician", "Construction", "IT Services",
-    "Car Dealership", "Dentist", "Accountant", "Security", "Cleaning Services"
+    "Plumber", "Mechanic", "Electrician", "Car Dealership", "Dentist",
+    "Security Company", "Cleaning Services", "Towing", "Auto Parts", "IT Support"
 ]
 
-city = st.selectbox("📍 Choose a city", cities)
-industry = st.selectbox("🏢 Choose an industry", industries)
+province = st.selectbox("📍 Select Province", provinces)
+industry = st.selectbox("🏢 Select Industry", industries)
 
-# --- Yellow Pages Scraper ---
-def scrape_yellow_pages(city, industry):
-    results = []
-    search_term = f"{industry} {city}".replace(" ", "+")
-    url = f"https://www.yellowpages.co.za/search?query={search_term}"
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+}
 
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+# Helper: extract URLs from Google search results
+def extract_google_links(query, max_results=20):
+    search_url = f"https://www.google.com/search?q={urllib.parse.quote(query)}&num={max_results}"
+    res = requests.get(search_url, headers=headers)
+    soup = BeautifulSoup(res.text, "html.parser")
+    links = []
 
-    response = requests.get(url, headers=headers)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    listings = soup.find_all('div', class_='yp-listing')
+    for tag in soup.find_all("a", href=True):
+        href = tag['href']
+        match = re.search(r"https://[^&]+", href)
+        if match:
+            url = match.group(0)
+            if "webcache" not in url and "google.com" not in url:
+                links.append(url)
 
-    for listing in listings:
-        name = listing.find('a', class_='yp-listing-name')
-        phone = listing.find('a', class_='yp-call')
-        email_tag = listing.find('a', href=re.compile(r'mailto:'))
+    return list(set(links))  # remove duplicates
 
-        results.append({
-            'Business': name.text.strip() if name else "N/A",
-            'Phone': phone.text.strip() if phone else "N/A",
-            'Email': email_tag['href'].replace("mailto:", "") if email_tag else "N/A",
-            'Facebook Page': '—'
-        })
+# Parse lead info from URL text
+def guess_name_from_url(url):
+    parts = re.split(r"[/.%-]", url)
+    keywords = [p for p in parts if p.lower() not in ['www', 'com', 'co', 'za', 'facebook', 'yellowpages']]
+    return " ".join([w.capitalize() for w in keywords[:3]])
 
-    return results
+if st.button("🔎 Find Leads"):
+    with st.spinner("Scouring the web like a digital ninja..."):
 
-# --- Facebook Page Finder ---
-def find_facebook_pages(industry, city, max_results=10):
-    query = f"{industry} {city} site:facebook.com"
-    search_url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+        yellow_query = f"site:yellowpages.co.za {industry} {province}"
+        fb_query = f"site:facebook.com {industry} {province}"
 
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+        yellow_links = extract_google_links(yellow_query)
+        fb_links = extract_google_links(fb_query)
 
-    try:
-        response = requests.get(search_url, headers=headers)
-        soup = BeautifulSoup(response.text, "html.parser")
-        links = soup.find_all("a", href=True)
-        fb_pages = []
+        all_data = []
 
-        for link in links:
-            href = link["href"]
-            if "facebook.com" in href and "/pages" not in href and "webcache" not in href:
-                match = re.search(r"https://www\.facebook\.com/[^&]+", href)
-                if match:
-                    fb_url = match.group(0)
-                    if fb_url not in fb_pages:
-                        fb_pages.append(fb_url)
-            if len(fb_pages) >= max_results:
-                break
+        for link in yellow_links:
+            all_data.append({
+                "Business": guess_name_from_url(link),
+                "Source": "Yellow Pages",
+                "Link": link
+            })
 
-        return fb_pages
-    except:
-        return []
+        for link in fb_links:
+            all_data.append({
+                "Business": guess_name_from_url(link),
+                "Source": "Facebook",
+                "Link": link
+            })
 
-# --- Combine and Display ---
-if st.button("🔎 Search"):
-    with st.spinner("Gathering leads..."):
-
-        yellow_data = scrape_yellow_pages(city, industry)
-        fb_pages = find_facebook_pages(industry, city)
-
-        # Attach Facebook pages to first few entries
-        for i in range(min(len(fb_pages), len(yellow_data))):
-            yellow_data[i]['Facebook Page'] = fb_pages[i]
-
-        df = pd.DataFrame(yellow_data)
-
-        if df.empty:
-            st.warning("No leads found. Try another city or field.")
-        else:
-            st.success(f"Found {len(df)} business leads.")
+        if all_data:
+            df = pd.DataFrame(all_data)
+            st.success(f"✅ Found {len(df)} leads.")
             st.dataframe(df, use_container_width=True)
-            st.download_button("📥 Download as CSV", df.to_csv(index=False), file_name=f"{industry}_{city}_leads.csv")
+            st.download_button("📥 Download CSV", df.to_csv(index=False), file_name="leads.csv")
+        else:
+            st.warning("⚠️ No results found. Try a different province or industry.")
+
