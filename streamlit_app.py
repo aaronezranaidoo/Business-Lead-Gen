@@ -3,38 +3,60 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 
-st.title("Free Business Contact Finder 🇿🇦")
+# === UI SETUP ===
+st.title("🔍 Free SA Business Contact Finder")
+st.markdown("Search for public contact info by industry and location.")
 
-st.markdown("""
-Search for emails and phone numbers of businesses in any industry and city in South Africa — using publicly available data.
-""")
+# Province and industry dropdowns
+cities = [
+    "Johannesburg", "Cape Town", "Durban", "Pretoria", "Port Elizabeth",
+    "East London", "Bloemfontein", "Polokwane", "Nelspruit", "Kimberley"
+]
 
-industry = st.text_input("Enter industry or business type (e.g. panel beaters, plumbers, textile suppliers):")
-location = st.text_input("Enter location (e.g. Cape Town, Durban, Johannesburg):")
-search_btn = st.button("Search")
+industries = [
+    "Plumber", "Mechanic", "Electrician", "Construction", "IT Services",
+    "Car Dealership", "Dentist", "Accountant", "Security", "Cleaning Services"
+]
 
-def search_cylex(industry, location):
-    url = f"https://www.cylex.net.za/{location.lower()}/{industry.lower().replace(' ', '-')}.html"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    r = requests.get(url, headers=headers)
-    soup = BeautifulSoup(r.text, "html.parser")
-    
-    data = []
-    for listing in soup.select('.entry'):
-        name = listing.select_one('.company').text.strip() if listing.select_one('.company') else ""
-        phone = listing.select_one('.phone').text.strip() if listing.select_one('.phone') else ""
-        email = listing.select_one('.email').text.strip() if listing.select_one('.email') else ""
-        data.append({"Business Name": name, "Phone": phone, "Email": email})
-    return data
+city = st.selectbox("📍 Choose a city", cities)
+category = st.selectbox("🏢 Choose an industry", industries)
 
-if search_btn and industry and location:
-    st.info(f"Searching for {industry} in {location}...")
-    results = search_cylex(industry, location)
+# === Scraper Function ===
+def get_contacts(city, category):
+    query = f"{category} in {city}"
+    url = f"https://www.cylex.net.za/search?q={query.replace(' ', '+')}"
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
 
-    if results:
-        df = pd.DataFrame(results)
-        st.success(f"Found {len(df)} businesses.")
-        st.dataframe(df)
-        st.download_button("Download CSV", data=df.to_csv(index=False), file_name="business_contacts.csv")
-    else:
-        st.warning("No results found. Try different keywords or city.")
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    cards = soup.find_all("div", class_="col-sm-12 search-item")
+
+    results = []
+    for card in cards:
+        name = card.find("a", class_="business-name")
+        phone = card.find("span", class_="contact-phone")
+        email = card.find("a", class_="contact-email")
+
+        results.append({
+            "Business": name.text.strip() if name else "N/A",
+            "Phone": phone.text.strip() if phone else "N/A",
+            "Email": email['href'].replace("mailto:", "") if email else "N/A"
+        })
+
+    return results
+
+# === Action Button ===
+if st.button("🔎 Search"):
+    with st.spinner("Searching..."):
+        data = get_contacts(city, category)
+        if data:
+            df = pd.DataFrame(data)
+            st.success(f"Found {len(df)} results.")
+            st.dataframe(df)
+            st.download_button("📥 Download CSV", df.to_csv(index=False), file_name="contacts.csv")
+        else:
+            st.warning("No results found. Try a different city or industry.")
+
